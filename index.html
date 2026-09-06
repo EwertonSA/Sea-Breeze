@@ -1,0 +1,898 @@
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sea Breeze Lab — Coastal Front Simulator</title>
+<meta name="description" content="Interactive 3D sea breeze front simulator. Adjust land and sea temperatures, scrub through the day, and watch the marine front push inland under a line of cumulus."/>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html,body{height:100%;overflow:hidden;background:#0b1526;font-family:'Space Grotesk',system-ui,sans-serif}
+  .mono{font-family:'JetBrains Mono',monospace}
+  .glass{background:rgba(7,13,26,.55);backdrop-filter:blur(16px) saturate(1.25);-webkit-backdrop-filter:blur(16px) saturate(1.25);border:1px solid rgba(255,255,255,.10);box-shadow:0 14px 44px rgba(2,6,17,.45)}
+  input[type=range]{-webkit-appearance:none;appearance:none;height:6px;border-radius:9999px;outline:none;cursor:pointer;background:rgba(255,255,255,.14)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid rgba(8,15,28,.35);box-shadow:0 2px 10px rgba(0,0,0,.5);cursor:grab;transition:transform .15s}
+  input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15)}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid rgba(8,15,28,.35);box-shadow:0 2px 10px rgba(0,0,0,.5);cursor:grab}
+  .switch{width:44px;height:24px;border-radius:9999px;background:rgba(255,255,255,.15);position:relative;transition:background .25s;flex:none;cursor:pointer;border:1px solid rgba(255,255,255,.08)}
+  .switch[data-on="true"]{background:linear-gradient(90deg,#0e7490,#22d3ee)}
+  .switch .knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .25s;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+  .switch[data-on="true"] .knob{left:22px}
+  .preset-btn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px 8px;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.05);color:rgba(255,255,255,.55);font-size:11px;font-weight:500;letter-spacing:.02em;transition:all .2s;cursor:pointer}
+  .preset-btn:hover{background:rgba(255,255,255,.10);color:rgba(255,255,255,.85)}
+  .preset-btn.active{border-color:rgba(103,232,249,.55);background:rgba(34,211,238,.10);color:#cffafe;box-shadow:0 0 0 1px rgba(103,232,249,.25),0 6px 18px rgba(34,211,238,.12)}
+  .scroll-thin::-webkit-scrollbar{width:6px}
+  .scroll-thin::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:9999px}
+  .sec-label{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.40)}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="assets/DayInTheClouds4k.hdr.js"></script>
+<script src="assets/SeaBrise.glb.js"></script>
+</head>
+<body class="text-white">
+
+<!-- 3D canvas mount -->
+<div id="scene" class="fixed inset-0 z-0"></div>
+
+<!-- cinematic vignette -->
+<div class="fixed inset-0 z-[1] pointer-events-none" style="background:radial-gradient(120% 95% at 50% 38%,transparent 52%,rgba(4,8,18,.45) 100%)"></div>
+
+<!-- UI overlay -->
+<div class="fixed inset-0 z-10 pointer-events-none">
+
+  <!-- Control panel -->
+  <aside id="panel" class="pointer-events-auto absolute top-4 left-4 w-[min(344px,calc(100vw-2rem))]">
+    <div class="glass rounded-2xl overflow-hidden">
+      <!-- header -->
+      <div class="flex items-center gap-3 px-5 pt-4 pb-3">
+        <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-none" style="background:linear-gradient(135deg,#0e7490,#22d3ee 55%,#fbbf24 130%)">
+          <i data-lucide="wind" class="w-5 h-5 text-white"></i>
+        </div>
+        <div class="min-w-0 flex-1">
+          <h1 class="text-[15px] font-bold leading-tight tracking-tight">Sea Breeze Lab</h1>
+          <p class="text-[9px] font-semibold tracking-[0.22em] text-white/40 uppercase">Coastal front simulator</p>
+        </div>
+        <button id="collapseBtn" class="w-7 h-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition" title="Collapse panel">
+          <i data-lucide="chevron-up" class="w-4 h-4 transition-transform duration-300" id="collapseIco"></i>
+        </button>
+      </div>
+
+      <div id="panelBody" class="scroll-thin px-5 pb-5 pt-1 space-y-5 max-h-[calc(100vh-13rem)] overflow-y-auto">
+
+        <!-- Coast profiles -->
+        <section class="space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="sec-label"><i data-lucide="layers" class="w-3.5 h-3.5"></i>Coast profile</span>
+            <span id="customChip" class="hidden items-center gap-1.5 text-[10px] font-medium text-amber-300/90"><span class="w-1.5 h-1.5 rounded-full bg-amber-300"></span>Custom · saved</span>
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            <button class="preset-btn" data-preset="straight">
+              <svg viewBox="0 0 40 26" class="w-9 h-6"><path d="M15 2 H3 V24 H15 Z" fill="currentColor" opacity="0.22"/><path d="M15 2 V24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+              Straight
+            </button>
+            <button class="preset-btn" data-preset="bay">
+              <svg viewBox="0 0 40 26" class="w-9 h-6"><path d="M15 2 C31 7 31 19 15 24 L3 24 L3 2 Z" fill="currentColor" opacity="0.22"/><path d="M15 2 C31 7 31 19 15 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+              Bay
+            </button>
+            <button class="preset-btn" data-preset="cape">
+              <svg viewBox="0 0 40 26" class="w-9 h-6"><path d="M23 2 C7 7 7 19 23 24 L3 24 L3 2 Z" fill="currentColor" opacity="0.22"/><path d="M23 2 C7 7 7 19 23 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+              Cape
+            </button>
+          </div>
+        </section>
+
+        <!-- Temperatures -->
+        <section class="space-y-3.5">
+          <span class="sec-label"><i data-lucide="thermometer" class="w-3.5 h-3.5"></i>Atmosphere</span>
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-[13px]">
+              <span class="flex items-center gap-2 text-white/75"><i data-lucide="thermometer-sun" class="w-4 h-4 text-amber-300"></i>Land temperature</span>
+              <span id="landVal" class="mono text-[13px] font-semibold text-amber-200">34.0°C</span>
+            </div>
+            <input id="landRange" type="range" min="12" max="45" step="0.5" value="34" class="w-full">
+          </div>
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-[13px]">
+              <span class="flex items-center gap-2 text-white/75"><i data-lucide="waves" class="w-4 h-4 text-cyan-300"></i>Sea temperature</span>
+              <span id="seaVal" class="mono text-[13px] font-semibold text-cyan-200">27.0°C</span>
+            </div>
+            <input id="seaRange" type="range" min="6" max="30" step="0.5" value="27" class="w-full">
+          </div>
+        </section>
+
+        <!-- Diagnostics -->
+        <section class="space-y-2.5">
+          <span class="sec-label"><i data-lucide="activity" class="w-3.5 h-3.5"></i>Diagnostics</span>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+              <div class="text-[9px] uppercase tracking-[0.16em] text-white/40 font-semibold">Land–Sea ΔT</div>
+              <div id="dtVal" class="mono text-[17px] font-semibold mt-0.5 text-white">—</div>
+            </div>
+            <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+              <div class="text-[9px] uppercase tracking-[0.16em] text-white/40 font-semibold">Breeze</div>
+              <div id="breezeVal" class="mono text-[17px] font-semibold mt-0.5 text-white">—</div>
+            </div>
+            <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+              <div class="text-[9px] uppercase tracking-[0.16em] text-white/40 font-semibold">Front inland</div>
+              <div id="frontVal" class="mono text-[17px] font-semibold mt-0.5 text-white">—</div>
+            </div>
+            <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+              <div class="text-[9px] uppercase tracking-[0.16em] text-white/40 font-semibold">Front speed</div>
+              <div id="speedVal" class="mono text-[17px] font-semibold mt-0.5 text-white">—</div>
+            </div>
+          </div>
+          <div class="rounded-xl border border-white/10 bg-white/5 px-3 pt-2.5 pb-2">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="text-[9px] uppercase tracking-[0.16em] text-white/40 font-semibold">Diurnal cycle</span>
+              <span class="flex items-center gap-3 text-[9px] text-white/45">
+                <span class="flex items-center gap-1"><span class="w-2 h-[3px] rounded-full bg-amber-400 inline-block"></span>ΔT</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-[3px] rounded-full bg-cyan-400 inline-block"></span>Front</span>
+              </span>
+            </div>
+            <canvas id="chart" class="w-full h-[84px] block"></canvas>
+          </div>
+        </section>
+
+        <!-- Display -->
+        <section class="space-y-3">
+          <span class="sec-label"><i data-lucide="eye" class="w-3.5 h-3.5"></i>Display</span>
+          <div class="flex items-center justify-between">
+            <span class="flex items-center gap-2.5 text-[13px] text-white/75"><i data-lucide="wind" class="w-4 h-4 text-cyan-300"></i>Wind arrows</span>
+            <button id="tglArrows" class="switch" data-on="true" aria-label="Toggle wind arrows"><span class="knob"></span></button>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="flex items-center gap-2.5 text-[13px] text-white/75"><i data-lucide="orbit" class="w-4 h-4 text-violet-300"></i>Auto-orbit camera</span>
+            <button id="tglSpin" class="switch" data-on="true" aria-label="Toggle auto orbit"><span class="knob"></span></button>
+          </div>
+        </section>
+
+        <div class="pt-1 flex items-center justify-between text-[11px] text-white/40">
+          <span class="flex items-center gap-1.5"><i data-lucide="save" class="w-3.5 h-3.5"></i>Auto-saved locally</span>
+          <button id="resetBtn" class="flex items-center gap-1.5 hover:text-white/85 transition cursor-pointer"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>Reset</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Status pill -->
+  <div class="pointer-events-auto absolute top-4 right-4">
+    <div class="glass rounded-full pl-3.5 pr-4 py-2 flex items-center gap-2.5">
+      <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-400 transition-colors duration-500" style="box-shadow:0 0 10px currentColor"></span>
+      <span id="statusText" class="text-[11px] font-semibold tracking-[0.14em] text-white/85">QUIESCENT</span>
+    </div>
+  </div>
+
+  <!-- Time control -->
+  <div class="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 w-[min(780px,calc(100vw-1.5rem))]">
+    <div class="glass rounded-2xl px-4 py-3 flex items-center gap-3 sm:gap-4">
+      <button id="playBtn" class="w-11 h-11 rounded-full flex items-center justify-center flex-none text-slate-900 bg-white hover:bg-cyan-100 transition shadow-lg shadow-black/30" title="Play / pause (Space)">
+        <span id="icoPause"><i data-lucide="pause" class="w-5 h-5"></i></span>
+        <span id="icoPlay" class="hidden"><i data-lucide="play" class="w-5 h-5 ml-0.5"></i></span>
+      </button>
+      <div class="mono text-xl sm:text-2xl font-semibold w-[76px] text-center flex-none tracking-tight" id="clock">08:00</div>
+      <div class="hidden xs:flex sm:flex flex-col items-center gap-0.5 text-amber-300/90 flex-none w-9">
+        <i data-lucide="sunrise" class="w-4 h-4"></i><span class="mono text-[9px] text-white/40">06:00</span>
+      </div>
+       <label for="timeRange" class="flex-1 min-w-0">
+         <span class="sr-only">Time of day</span>
+         <input id="timeRange" type="range" min="360" max="1260" step="1" value="480" class="w-full">
+       </label>
+      <div class="hidden xs:flex sm:flex flex-col items-center gap-0.5 text-orange-300/90 flex-none w-9">
+        <i data-lucide="sunset" class="w-4 h-4"></i><span class="mono text-[9px] text-white/40">21:00</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hint -->
+  <div class="pointer-events-none absolute bottom-5 right-5 hidden xl:flex items-center gap-4 text-[11px] text-white/45">
+    <span class="flex items-center gap-1.5"><i data-lucide="rotate-3d" class="w-3.5 h-3.5"></i>Drag to rotate</span>
+    <span class="flex items-center gap-1.5"><i data-lucide="mouse" class="w-3.5 h-3.5"></i>Scroll to zoom</span>
+    <span class="flex items-center gap-1.5"><i data-lucide="space" class="w-3.5 h-3.5"></i>Space to play</span>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+window.THREE=THREE;
+
+lucide.createIcons();
+
+/* ============================== helpers ============================== */
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const ss=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)};
+const C=h=>new THREE.Color(h);
+const hsh=x=>{const s=Math.sin(x)*43758.5453;return s-Math.floor(s)};
+
+/* ============================== state ============================== */
+const LS_KEY='sbf.settings.v1';
+const DEFAULTS={land:34,sea:27,profile:'bay',arrows:true,spin:true};
+let state={...DEFAULTS};
+try{const s=JSON.parse(localStorage.getItem(LS_KEY));if(s)state={...DEFAULTS,...s}}catch(e){}
+const save=()=>{try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}};
+
+const PRESETS={
+  straight:{label:'Straight',land:31,sea:23,coast:z=>0},
+  bay:{label:'Bay',land:34,sea:27,coast:z=>-22*Math.exp(-((z/46)**2))},
+  cape:{label:'Cape',land:26,sea:17,coast:z=>22*Math.exp(-((z/46)**2))},
+};
+const coastFn=z=>PRESETS[state.profile].coast(z);
+
+/* ============================== physics ============================== */
+const THETA=1.5, NDAY=901, KM2W=1.05;
+const day={dT:new Float32Array(NDAY),pen:new Float32Array(NDAY),vel:new Float32Array(NDAY),cloud:new Float32Array(NDAY),wind:new Float32Array(NDAY)};
+function computeDay(){
+  const D=clamp(0.3*(state.land-state.sea)+5,3,12);
+  let pen=0;
+  for(let i=0;i<NDAY;i++){
+    const t=6+i/60;
+    const Tl=state.land-D*((t-15)/9)**2;
+    const dT=Tl-state.sea;
+    const drive=Math.max(0,dT-THETA);
+    let v=drive>0?Math.min(11,drive*1.7):(pen>0.02?-1.1:0);
+    pen=clamp(pen+v/60,0,60);
+    if(pen<=0&&v<0)v=0;
+    const cl=clamp(drive/9,0,1)*ss(0.2,2.0,Math.max(v,0))*(v<0?0.35:1);
+    const w=ss(0,6,drive)*(v<0?0.5:1);
+    day.dT[i]=dT;day.pen[i]=pen;day.vel[i]=v;day.cloud[i]=cl;day.wind[i]=w;
+  }
+}
+function sampleDay(t){
+  const x=clamp((t-6)*60,0,NDAY-1.001),i=Math.floor(x),f=x-i;
+  return{dT:lerp(day.dT[i],day.dT[i+1],f),pen:lerp(day.pen[i],day.pen[i+1],f),vel:lerp(day.vel[i],day.vel[i+1],f),cloud:lerp(day.cloud[i],day.cloud[i+1],f),wind:lerp(day.wind[i],day.wind[i+1],f)};
+}
+
+/* ============================== renderer / scene ============================== */
+const container=document.getElementById('scene');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+window.renderer=renderer;
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.05;
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+window.__threeScene=scene;
+scene.fog=new THREE.Fog(C(0xbcdffc),170,460);
+
+function loadHDRSky(){
+  if(!window.hdrBase64)return;
+  const binary=atob(window.hdrBase64),bytes=new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+  const blobUrl=URL.createObjectURL(new Blob([bytes],{type:'image/vnd.radiance'}));
+  new RGBELoader().load(blobUrl,texture=>{
+    texture.mapping=THREE.EquirectangularReflectionMapping;
+    texture.wrapS=THREE.ClampToEdgeWrapping;
+    texture.wrapT=THREE.ClampToEdgeWrapping;
+    texture.needsUpdate=true;
+    scene.background=texture;
+    scene.environment=texture;
+    sky.visible=false;
+    URL.revokeObjectURL(blobUrl);
+  },undefined,()=>URL.revokeObjectURL(blobUrl));
+}
+
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.5,2000);
+window.camera=camera;
+camera.position.set(156,74,198);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+window.controls=controls;
+controls.target.set(-14,3,0);
+controls.enableDamping=true;
+controls.dampingFactor=0.06;
+controls.minDistance=55;
+controls.maxDistance=320;
+controls.maxPolarAngle=1.45;
+controls.minPolarAngle=0.14;
+controls.autoRotate=state.spin;
+controls.autoRotateSpeed=-0.5;
+
+const dirLight=new THREE.DirectionalLight(0xffffff,1.6);
+window.dirLight=dirLight;
+dirLight.castShadow=true;
+dirLight.shadow.mapSize.set(2048,2048);
+dirLight.shadow.camera.left=-140;dirLight.shadow.camera.right=140;
+dirLight.shadow.camera.top=140;dirLight.shadow.camera.bottom=-140;
+dirLight.shadow.camera.near=20;dirLight.shadow.camera.far=520;
+dirLight.shadow.bias=-0.0006;dirLight.shadow.normalBias=1.5;
+scene.add(dirLight,dirLight.target);
+const hemi=new THREE.HemisphereLight(0xbcdffc,0x6f7f5f,0.8);
+window.hemi=hemi;
+scene.add(hemi);
+
+/* ============================== sky dome ============================== */
+const skyU={uZenith:{value:C(0x2a63c9)},uHorizon:{value:C(0xbcdffc)},uSunColor:{value:C(0xfff2dd)},uSunDir:{value:new THREE.Vector3(0,1,0)}};
+const sky=new THREE.Mesh(
+  new THREE.SphereGeometry(820,32,20),
+  new THREE.ShaderMaterial({
+    uniforms:skyU,side:THREE.BackSide,depthWrite:false,
+    vertexShader:`varying vec3 vDir;void main(){vDir=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader:`uniform vec3 uZenith,uHorizon,uSunColor;uniform vec3 uSunDir;varying vec3 vDir;
+      void main(){
+        vec3 d=normalize(vDir);float h=d.y;
+        vec3 col=mix(uHorizon,uZenith,pow(max(h,0.0),0.5));
+        if(h<0.0)col=mix(uHorizon,uHorizon*0.55,clamp(-h*3.0,0.0,1.0));
+        float s=max(dot(d,normalize(uSunDir)),0.0);
+        col+=uSunColor*(pow(s,900.0)*1.5+pow(s,16.0)*0.20);
+        gl_FragColor=vec4(col,1.0);
+      }`
+  })
+);
+sky.renderOrder=-1;sky.frustumCulled=false;
+scene.add(sky);
+loadHDRSky();
+
+/* ============================== terrain ============================== */
+const TER={w:150,d:200,sx:110,sz:120,cx:-35};
+function heightAt(x,z){
+  const d=coastFn(z)-x;
+  if(d<=0)return Math.max(-2.0,-0.15+0.3*d);
+  let h=0.05+0.115*Math.pow(Math.min(d,70),0.9);
+  const hills=(Math.sin(x*0.16+1.7)*Math.cos(z*0.13)+0.6*Math.sin(z*0.07+0.5)+0.8*Math.sin(x*0.06))*0.9;
+  h+=hills*ss(6,42,d)*1.4;
+  return h;
+}
+window.heightAt=heightAt;
+let terrain=null;
+let importedRoot=null;
+window.__glbRoot=null;
+window.__glbLoaded=false;
+function paintTerrain(g){
+  const p=g.attributes.position,n=p.count,colors=new Float32Array(n*3);
+  const dry=clamp((state.land-25)/15,0,1);
+  const sand=C(0xE4D3A1),sub=C(0x8a7a58);
+  const gA=C(0x7FB069).lerp(C(0xC2A85E),dry*0.55);
+  const gB=C(0x4E7D4A).lerp(C(0x8F7A4A),dry*0.45);
+  const rock=C(0x8B8378),col=new THREE.Color();
+  for(let i=0;i<n;i++){
+    const x=p.getX(i),z=p.getZ(i),y=p.getY(i),d=coastFn(z)-x;
+    if(d<=0)col.copy(sub);
+    else{
+      col.copy(sand).lerp(gA,ss(1.5,7,d));
+      col.lerp(gB,ss(12,34,d));
+      col.lerp(rock,ss(4.2,6.8,y)*0.55);
+    }
+    col.offsetHSL(0,0,(hsh(i*12.9898)-0.5)*0.05);
+    colors[i*3]=col.r;colors[i*3+1]=col.g;colors[i*3+2]=col.b;
+  }
+  g.setAttribute('color',new THREE.BufferAttribute(colors,3));
+}
+function buildTerrain(){
+  return;
+}
+
+/* ============================== sea ============================== */
+const seaUniforms=THREE.UniformsUtils.merge([THREE.UniformsLib.fog,{
+  uTime:{value:0},uAmp:{value:0.3},uSunDir:{value:new THREE.Vector3(0,1,0)},
+  uDeep:{value:C(0x0a3a52)},uShallow:{value:C(0x166f8c)},uSky:{value:C(0xbcdffc)},uOceanMap:{value:false}
+}]);
+const seaMat=new THREE.ShaderMaterial({
+  uniforms:seaUniforms,fog:true,
+  vertexShader:`
+    uniform float uTime,uAmp;
+    varying vec3 vNormal;varying vec3 vWorld;varying vec2 vUv;
+    #include <fog_pars_vertex>
+    void main(){
+      vec3 p=position;float t=uTime;vUv=uv;
+      float w=0.35*sin(p.x*0.11+t*0.9)+0.28*sin(p.z*0.13-t*0.7)+0.45*sin((p.x+p.z)*0.06+t*0.5)+0.30*sin((p.x-p.z)*0.045-t*0.35);
+      float dwx=0.35*0.11*cos(p.x*0.11+t*0.9)+0.45*0.06*cos((p.x+p.z)*0.06+t*0.5)+0.30*0.045*cos((p.x-p.z)*0.045-t*0.35);
+      float dwz=0.28*0.13*cos(p.z*0.13-t*0.7)+0.45*0.06*cos((p.x+p.z)*0.06+t*0.5)-0.30*0.045*cos((p.x-p.z)*0.045-t*0.35);
+      p.y+=w*uAmp;
+      vNormal=normalize(vec3(-dwx*uAmp,1.0,-dwz*uAmp));
+      vec4 wp=modelMatrix*vec4(p,1.0);vWorld=wp.xyz;
+      vec4 mvPosition=viewMatrix*wp;
+      gl_Position=projectionMatrix*mvPosition;
+      #include <fog_vertex>
+    }`,
+  fragmentShader:`
+    uniform vec3 uDeep,uShallow,uSky,uSunDir;
+    varying vec3 vNormal;varying vec3 vWorld;varying vec2 vUv;
+    #include <fog_pars_fragment>
+    void main(){
+      vec3 N=normalize(vNormal);
+      vec3 V=normalize(cameraPosition-vWorld);
+      float fres=pow(1.0-max(dot(V,N),0.0),3.0);
+      vec3 base=mix(uDeep,uShallow,clamp(fres*1.4-0.15,0.0,1.0));
+      base=mix(base,uSky,fres*0.45);
+      vec3 H=normalize(V+normalize(uSunDir));
+      float ndh=max(dot(N,H),0.0);
+      float spec=pow(ndh,240.0)*1.1+pow(ndh,36.0)*0.16;
+      gl_FragColor=vec4(base+vec3(1.0,0.96,0.88)*spec,1.0);
+      #include <fog_fragment>
+    }`
+});
+const seaGeo=new THREE.PlaneGeometry(370,400,400,410);
+seaGeo.rotateX(-Math.PI/2);seaGeo.translate(55,0,0);
+const proceduralSea=new THREE.Mesh(seaGeo,seaMat);
+let sea=proceduralSea;
+window.sea=sea;
+sea.visible=false;
+scene.add(sea);
+
+function updateSeaColors(){
+  const f=clamp((state.sea-12)/16,0,1);
+  seaUniforms.uDeep.value.copy(C(0x0a3a52)).lerp(C(0x066b7a),f);
+  seaUniforms.uShallow.value.copy(C(0x166f8c)).lerp(C(0x23b7ad),f);
+}
+
+/* ============================== foam along waterline ============================== */
+const FOAM_N=110;let foamGeo,foamMat,foamMesh;
+function buildFoam(){
+  if(foamGeo)foamGeo.dispose();
+  foamGeo=new THREE.BufferGeometry();
+  const pos=new Float32Array((FOAM_N+1)*2*3);
+  const idx=[];
+  for(let i=0;i<FOAM_N;i++){const a=i*2;idx.push(a,a+1,a+2,a+1,a+3,a+2)}
+  foamGeo.setIndex(idx);
+  foamGeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  if(!foamMesh){
+    foamMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.14,depthWrite:false,side:THREE.DoubleSide});
+    foamMesh=new THREE.Mesh(foamGeo,foamMat);foamMesh.renderOrder=2;foamMesh.frustumCulled=false;scene.add(foamMesh);
+  }else{
+    foamMesh.geometry=foamGeo;
+  }
+}
+function updateFoam(time){
+  if(!foamGeo)return;
+  const pos=foamGeo.attributes.position,a=seaUniforms.uAmp.value;
+  for(let i=0;i<=FOAM_N;i++){
+    const z=-95+i*(190/FOAM_N),c=coastFn(z);
+    const x0=c-0.25,x1=c+1.9;
+    const y=(0.35*Math.sin(x0*0.11+time*0.9)+0.28*Math.sin(z*0.13-time*0.7)+0.45*Math.sin((x0+z)*0.06+time*0.5)+0.30*Math.sin((x0-z)*0.045-time*0.35))*a+0.05;
+    pos.setXYZ(i*2,x0,y,z);
+    const y1=(0.35*Math.sin(x1*0.11+time*0.9)+0.28*Math.sin(z*0.13-time*0.7)+0.45*Math.sin((x1+z)*0.06+time*0.5)+0.30*Math.sin((x1-z)*0.045-time*0.35))*a+0.05;
+    pos.setXYZ(i*2+1,x1,y1,z);
+  }
+  pos.needsUpdate=true;
+  foamMat.opacity=0.11+0.05*Math.sin(time*1.5);
+}
+
+/* ============================== front ribbon + marine air ============================== */
+const RN=72;
+const ribbonGeo=new THREE.BufferGeometry();
+{
+  const idx=[];for(let i=0;i<RN;i++){const a=i*2;idx.push(a,a+1,a+2,a+1,a+3,a+2)}
+  ribbonGeo.setIndex(idx);
+  ribbonGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array((RN+1)*2*3),3));
+}
+const ribbonMat=new THREE.MeshBasicMaterial({color:0xbdf3ff,transparent:true,opacity:0.2,depthWrite:false,side:THREE.DoubleSide});
+const ribbon=new THREE.Mesh(ribbonGeo,ribbonMat);ribbon.renderOrder=3;ribbon.frustumCulled=false;scene.add(ribbon);
+
+const MZ=48,MX=7;
+const marineGeo=new THREE.BufferGeometry();
+{
+  const idx=[];
+  for(let j=0;j<MZ;j++)for(let i=0;i<MX;i++){const a=j*(MX+1)+i;idx.push(a,a+1,a+MX+1,a+1,a+MX+2,a+MX+1)}
+  marineGeo.setIndex(idx);
+  marineGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array((MZ+1)*(MX+1)*3),3));
+  const al=new Float32Array((MZ+1)*(MX+1));
+  for(let j=0;j<=MZ;j++)for(let i=0;i<=MX;i++){const fr=i/MX;al[j*(MX+1)+i]=0.30*(1-fr)+0.05}
+  marineGeo.setAttribute('aAlpha',new THREE.BufferAttribute(al,1));
+}
+const marineMat=new THREE.ShaderMaterial({
+  uniforms:{uColor:{value:C(0xcfe9f5)},uOpacity:{value:0.95}},
+  transparent:true,depthWrite:false,side:THREE.DoubleSide,
+  vertexShader:`attribute float aAlpha;varying float vA;void main(){vA=aAlpha;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+  fragmentShader:`uniform vec3 uColor;uniform float uOpacity;varying float vA;void main(){gl_FragColor=vec4(uColor,vA*uOpacity);}`
+});
+const marine=new THREE.Mesh(marineGeo,marineMat);marine.renderOrder=2;marine.frustumCulled=false;scene.add(marine);
+
+function findImportedObject(root,name){
+  let found=null;
+  root.traverse(object=>{if(!found&&object.name===name)found=object});
+  return found;
+}
+let seaWaveBase=null;
+function setupSeaWave(mesh){
+  const positions=mesh.geometry.getAttribute('position');
+  seaWaveBase={positions,x:new Float32Array(positions.count),y:new Float32Array(positions.count),z:new Float32Array(positions.count)};
+  for(let i=0;i<positions.count;i++){seaWaveBase.x[i]=positions.getX(i);seaWaveBase.y[i]=positions.getY(i);seaWaveBase.z[i]=positions.getZ(i)}
+}
+function updateImportedSeaWaves(time,amp){
+  if(!seaWaveBase)return;
+  const {positions,x,y,z}=seaWaveBase;
+  for(let i=0;i<positions.count;i++){
+    const w=1.4*Math.sin(x[i]*0.11+time*0.9)+1.3*Math.sin(z[i]*0.13-time*0.7)+1.0*Math.sin((x[i]+z[i])*0.06+time*0.5)+0.9*Math.sin((x[i]-z[i])*0.045-time*0.35);
+    positions.setY(i,y[i]+w*amp*0.35);
+  }
+  positions.needsUpdate=true;
+}
+function setupImportedScene(gltf){
+  const root=gltf.scene,islandMeshes=[];
+  root.traverse(object=>{
+    if(!object.isMesh)return;
+    const materials=Array.isArray(object.material)?object.material:[object.material];
+    if(materials.some(material=>material&&material.name&&material.name.toLowerCase()==='island'))islandMeshes.push(object);
+  });
+  const ocean=findImportedObject(root,'Plane003');
+  if(!ocean||islandMeshes.length===0)throw new Error('SeaBrise.glb is missing Plane003 or island meshes');
+  const oldTerrain=terrain;
+  if(oldTerrain)oldTerrain.visible=false;
+  root.traverse(object=>{if(object.isMesh){object.castShadow=true;object.receiveShadow=true}});
+  scene.add(root);
+  importedRoot=root;
+  if(islandMeshes[0])islandMeshes[0].scale.set(5,5,5);
+  if(islandMeshes[1])islandMeshes[1].scale.set(3,3,3);
+  if(islandMeshes[2])islandMeshes[2].scale.set(3,3,3);
+  if(islandMeshes[3])islandMeshes[3].scale.set(3,3,3);
+  terrain=islandMeshes[0];
+  sea=ocean;
+  sea.position.y=-3.2;
+  setupSeaWave(sea);
+  window.sea=sea;
+  sea.visible=true;
+  proceduralSea.visible=false;
+  ribbon.visible=true;marine.visible=false;
+  if(foamMesh)foamMesh.visible=false;
+  window.__coastline=terrain;
+  window.__islandMeshes=islandMeshes;
+  window.__frontLineMeshes=[findImportedObject(root,'Mesh_3'),findImportedObject(root,'Mesh_6')].filter(Boolean);
+  window.__frontLineMeshes.forEach(object=>{object.visible=true});
+  window.__glbRoot=root;
+  window.__glbLoaded=true;
+}
+function loadImportedScene(){
+  const encoded=window.SEA_BREEZE.includes(',')?window.SEA_BREEZE.slice(window.SEA_BREEZE.indexOf(',')+1):window.SEA_BREEZE;
+  const binary=atob(encoded),bytes=new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+  new GLTFLoader().parse(bytes.buffer,'',setupImportedScene,error=>console.error('Unable to load SeaBrise.glb',error));
+}
+
+const flagMeshes=[];
+function updateFlags(penW,ci,time){
+  if(!flagMeshes.length&&window.__glbRoot){
+    const root=window.__glbRoot,names=['quickmaterial2','quickmaterial2001','quickmaterial2002','quickmaterial2003','quickmaterial2004','quickmaterial2005','quickmaterial2006','quickmaterial2007','quickmaterial2008'];
+    for(const name of names){const mesh=findImportedObject(root,name);if(mesh&&mesh.isMesh)flagMeshes.push(mesh)}
+  }
+  flagMeshes.forEach((mesh,index)=>{
+    const z=-92+index*(184/Math.max(flagMeshes.length-1,1)),f=coastFn(z)-penW,y=heightAt(f,z)+0.16;
+    const waveSway=Math.sin(time*2.0+index)*(0.15+ci*0.1);
+    mesh.position.set(f+waveSway,y,z);
+    mesh.scale.setScalar(2.0);
+    mesh.visible=true;
+  });
+}
+function updateRibbon(penW,ci,time){
+  ribbon.visible=true;
+  const pos=ribbonGeo.attributes.position;
+  for(let i=0;i<=RN;i++){
+    const z=-92+i*(184/RN),f=coastFn(z)-penW,y=heightAt(f,z)+0.16;
+    pos.setXYZ(i*2,f-0.8,y,z);pos.setXYZ(i*2+1,f+0.8,y,z);
+  }
+  pos.needsUpdate=true;
+  ribbonMat.opacity=0.13+0.20*ci+0.05*Math.sin(time*2.6);
+}
+function updateMarine(penW){
+  if(importedRoot){marine.visible=false;return}
+  marine.visible=penW>0.4;
+  if(!marine.visible)return;
+  const pos=marineGeo.attributes.position;
+  for(let j=0;j<=MZ;j++){
+    const z=-88+j*(176/MZ),c=coastFn(z),f=c-penW;
+    for(let i=0;i<=MX;i++){
+      const fr=i/MX,x=lerp(f+0.35,c+0.55,fr);
+      pos.setXYZ(j*(MX+1)+i,x,heightAt(x,z)+0.13,z);
+    }
+  }
+  pos.needsUpdate=true;
+}
+
+/* ============================== clouds ============================== */
+function makeCloudTexture(){
+  const c=document.createElement('canvas');c.width=c.height=128;
+  const x=c.getContext('2d');
+  const blob=(cx,cy,r,a)=>{const g=x.createRadialGradient(cx,cy,0,cx,cy,r);g.addColorStop(0,`rgba(255,255,255,${a})`);g.addColorStop(0.55,`rgba(255,255,255,${a*0.55})`);g.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=g;x.beginPath();x.arc(cx,cy,r,0,6.29);x.fill()};
+  blob(64,72,50,0.95);blob(42,62,32,0.8);blob(88,60,32,0.85);blob(62,46,36,0.75);
+  return new THREE.CanvasTexture(c);
+}
+const cloudTex=makeCloudTexture();
+const CL_OFF=[[0,0,0,1.0],[-3.4,0.5,0.5,0.8],[3.2,0.4,-0.4,0.85],[-1.5,1.6,0.1,0.62],[1.7,1.4,0.2,0.66],[0.3,-0.8,0,0.7]];
+const clusters=[];
+for(let i=0;i<13;i++){
+  const sprites=[];
+  for(let k=0;k<6;k++){
+    const m=new THREE.SpriteMaterial({map:cloudTex,transparent:true,depthWrite:false,opacity:0,color:k%3?0xffffff:0xe6edf5});
+    const s=new THREE.Sprite(m);s.renderOrder=9;scene.add(s);sprites.push(s);
+  }
+  clusters.push({z:-78+i*13,jx:(hsh(i*7.13)-0.5)*7,ph:hsh(i*3.7)*6.28,sprites});
+}
+function updateClouds(penW,ci,time){
+  for(const cl of clusters){
+    const f=coastFn(cl.z)-penW,cx=f+cl.jx;
+    const gy=Math.max(0,heightAt(cx,cl.z));
+    const base=7.5+ci*7+gy*0.35+Math.sin(time*0.4+cl.ph)*0.4;
+    const sc=0.45+ci*0.85,op=clamp(ci*1.2,0,1)*0.92;
+    cl.sprites.forEach((s,k)=>{
+      const o=CL_OFF[k];
+      s.position.set(cx+o[0]*sc*2.2,base+o[1]*sc*2.2,cl.z+o[2]*sc*2.2);
+      const S=5.2*o[3]*sc+1.5;
+      s.scale.set(S,S*0.62,1);
+      s.material.opacity=op*(k===0?1:0.85);
+      if(k>=3&&k<=4)s.material.color.setRGB(1,1,1);
+      else if(k===5)s.material.color.setRGB(0.45,0.48,0.55);
+      else s.material.color.setRGB(0.90,0.93,0.96);
+    });
+  }
+}
+window.clusters=clusters;
+window.coastFn=coastFn;
+window.updateClouds=updateClouds;
+
+/* ============================== wind arrows ============================== */
+const ROWS=9,COLS=9,LAYERS=3;
+const rowZ=Array.from({length:ROWS},(_,i)=>-70+i*17.5);
+const colX=[-34,-24,-15,-7,0,7,15,24,34];
+const layY=[1.8,5.5,11.5];
+const NA=ROWS*COLS*LAYERS;
+const coastRows=new Float32Array(ROWS);
+function computeCoastRows(){for(let r=0;r<ROWS;r++)coastRows[r]=coastFn(rowZ[r])}
+
+const shaft=new THREE.CylinderGeometry(0.075,0.075,1.05,6);shaft.rotateX(Math.PI/2);shaft.translate(0,0,0.55);
+const head=new THREE.ConeGeometry(0.24,0.62,10);head.rotateX(Math.PI/2);head.translate(0,0,1.36);
+const arrowGeo=mergeGeometries([shaft,head]);
+window.arrowGeo=arrowGeo;
+const arrowMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.88});
+const arrows=new THREE.InstancedMesh(arrowGeo,arrowMat,NA);
+window.arrows=arrows;
+arrows.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+arrows.renderOrder=4;arrows.frustumCulled=false;
+scene.add(arrows);
+const arrowData=[];
+for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)for(let l=0;l<LAYERS;l++)
+  arrowData.push({r,off:colX[c],y:layY[l],phase:hsh(r*91.7+c*17.3+l*5.1)});
+const dummy=new THREE.Object3D(),tmpDir=new THREE.Vector3(),ZAX=new THREE.Vector3(0,0,1);
+const slowC=C(0x67e8f9),fastC=C(0xffffff),tmpC=new THREE.Color();
+function updateArrows(time,penW,S){
+  arrows.visible=state.arrows&&S>0.015;
+  if(!arrows.visible)return;
+  for(let i=0;i<NA;i++){
+    const a=arrowData[i],f=coastRows[a.r]-penW,dx=a.off,x=f+dx,z=rowZ[a.r];
+    const y=a.y;
+    const wl=1-ss(2.5,4.5,y),wh=ss(9,12,y),wm=Math.max(0,1-wl-wh);
+    const e6=Math.exp(-((dx/6.5)**2)),th=Math.tanh(dx/9);
+    const u=(wl*-th+wm*-th*0.35+wh*th*1.05)*S*2.6;
+    const w=(wl*0.5*e6+wm*3.2*e6+wh*-0.55*Math.min(1,Math.abs(dx)/16))*S*2.6;
+    const vz=0.3*Math.sin(time*0.8+a.phase*6.28)*S;
+    const sp=Math.hypot(u,w,vz);
+    if(sp<1e-3){dummy.scale.setScalar(0.0001);dummy.updateMatrix();arrows.setMatrixAt(i,dummy.matrix);continue}
+    tmpDir.set(u/sp,w/sp,vz/sp);
+    const gy=heightAt(x,z),yy=Math.max(y,gy+1.5);
+    const o2=(((time*0.45*Math.min(sp,2)+a.phase)%1)-0.5)*2.6;
+    dummy.position.set(x+tmpDir.x*o2,yy+tmpDir.y*o2,z+tmpDir.z*o2);
+    dummy.quaternion.setFromUnitVectors(ZAX,tmpDir);
+    dummy.scale.setScalar((0.5+Math.min(sp/3.4,1)*0.85)*1.5);
+    dummy.updateMatrix();
+    arrows.setMatrixAt(i,dummy.matrix);
+    tmpC.copy(slowC).lerp(fastC,Math.min(sp/3.4,1));
+    arrows.setColorAt(i,tmpC);
+  }
+  arrows.instanceMatrix.needsUpdate=true;
+  if(arrows.instanceColor)arrows.instanceColor.needsUpdate=true;
+}
+
+/* ============================== environment / sun ============================== */
+const zDawn=C(0x55648f),zNoon=C(0x2a63c9),hDawn=C(0xffb37e),hNoon=C(0xbfe0fc),sDawn=C(0xffc493),sNoon=C(0xfff7e6),lDawn=C(0xffd2a4),lNoon=C(0xffffff);
+const tmp1=new THREE.Color(),tmp2=new THREE.Color(),tmp3=new THREE.Color(),sunV=new THREE.Vector3();
+function updateEnvironment(t){
+  const a=Math.PI*(t-6)/15;
+  const el=Math.max(0.04,Math.sin(a));
+  sunV.set(Math.cos(a)*0.92,el,-0.42).normalize();
+  const dayness=Math.pow(Math.max(Math.sin(a),0),0.6);
+  skyU.uSunDir.value.copy(sunV);
+  skyU.uZenith.value.copy(tmp1.copy(zDawn).lerp(zNoon,dayness));
+  skyU.uHorizon.value.copy(tmp2.copy(hDawn).lerp(hNoon,dayness));
+  skyU.uSunColor.value.copy(tmp3.copy(sDawn).lerp(sNoon,dayness));
+  scene.fog.color.copy(skyU.uHorizon.value);
+  dirLight.position.copy(sunV).multiplyScalar(190);
+  dirLight.color.copy(tmp1.copy(lDawn).lerp(lNoon,dayness));
+  dirLight.intensity=0.35+1.55*dayness;
+  hemi.intensity=0.45+0.55*dayness;
+  hemi.color.copy(skyU.uHorizon.value);
+  seaUniforms.uSunDir.value.copy(sunV);
+  seaUniforms.uSky.value.copy(skyU.uHorizon.value);
+}
+
+/* ============================== UI refs ============================== */
+const $=id=>document.getElementById(id);
+const landRange=$('landRange'),seaRange=$('seaRange'),landVal=$('landVal'),seaVal=$('seaVal');
+const timeRange=$('timeRange'),clockEl=$('clock'),chartEl=$('chart');
+const dtVal=$('dtVal'),breezeVal=$('breezeVal'),frontVal=$('frontVal'),speedVal=$('speedVal');
+const statusDot=$('statusDot'),statusText=$('statusText'),customChip=$('customChip');
+const tglArrows=$('tglArrows'),tglSpin=$('tglSpin');
+
+function setFill(el,color){
+  const p=(el.value-el.min)/(el.max-el.min)*100;
+  el.style.background=`linear-gradient(90deg, ${color} ${p}%, rgba(255,255,255,.15) ${p}%)`;
+}
+function fmtTemp(v){return v.toFixed(1)+'°C'}
+
+function syncSliders(){
+  landRange.value=state.land;seaRange.value=state.sea;
+  landVal.textContent=fmtTemp(state.land);seaVal.textContent=fmtTemp(state.sea);
+  setFill(landRange,'#f59e0b');setFill(seaRange,'#22d3ee');
+}
+function refreshPresetUI(){
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.toggle('active',b.dataset.preset===state.profile));
+  const p=PRESETS[state.profile];
+  const custom=Math.abs(state.land-p.land)>0.01||Math.abs(state.sea-p.sea)>0.01;
+  customChip.classList.toggle('hidden',!custom);
+  customChip.classList.toggle('flex',custom);
+}
+function refreshToggles(){
+  tglArrows.dataset.on=state.arrows;tglSpin.dataset.on=state.spin;
+  controls.autoRotate=state.spin;
+}
+
+/* ============================== chart ============================== */
+function sizeChart(){
+  const r=chartEl.getBoundingClientRect(),dpr=Math.min(devicePixelRatio,2);
+  chartEl.width=Math.max(10,r.width*dpr);chartEl.height=Math.max(10,r.height*dpr);
+}
+function drawChart(t){
+  const ctx=chartEl.getContext('2d'),W=chartEl.width,H=chartEl.height,dpr=Math.min(devicePixelRatio,2);
+  ctx.clearRect(0,0,W,H);
+  const padL=6*dpr,padR=6*dpr,padT=8*dpr,padB=12*dpr;
+  const mx=h=>padL+(h-6)/15*(W-padL-padR);
+  const myT=d=>H-padB-(d+4)/20*(H-padT-padB);
+  const myP=p=>H-padB-(p/62)*(H-padT-padB);
+  ctx.strokeStyle='rgba(255,255,255,0.07)';ctx.lineWidth=1;
+  for(let h=6;h<=21;h+=3){ctx.beginPath();ctx.moveTo(mx(h),padT);ctx.lineTo(mx(h),H-padB);ctx.stroke()}
+  ctx.fillStyle='rgba(255,255,255,0.35)';ctx.font=`${8*dpr}px JetBrains Mono`;ctx.textAlign='center';
+  for(let h=6;h<=21;h+=3)ctx.fillText(String(h).padStart(2,'0'),mx(h),H-3*dpr);
+  ctx.setLineDash([4*dpr,4*dpr]);ctx.strokeStyle='rgba(251,191,36,0.35)';ctx.lineWidth=1*dpr;
+  ctx.beginPath();ctx.moveTo(padL,myT(THETA));ctx.lineTo(W-padR,myT(THETA));ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle='#fbbf24';ctx.lineWidth=1.6*dpr;ctx.beginPath();
+  for(let i=0;i<NDAY;i+=3){const h=6+i/60,x=mx(h),y=myT(day.dT[i]);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
+  ctx.stroke();
+  ctx.strokeStyle='#22d3ee';ctx.lineWidth=1.6*dpr;ctx.beginPath();
+  for(let i=0;i<NDAY;i+=3){const h=6+i/60,x=mx(h),y=myP(day.pen[i]);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
+  ctx.stroke();
+  const s=sampleDay(t),X=mx(t);
+  ctx.strokeStyle='rgba(255,255,255,0.55)';ctx.lineWidth=1*dpr;
+  ctx.beginPath();ctx.moveTo(X,padT);ctx.lineTo(X,H-padB);ctx.stroke();
+  ctx.fillStyle='#fbbf24';ctx.beginPath();ctx.arc(X,myT(s.dT),2.4*dpr,0,6.29);ctx.fill();
+  ctx.fillStyle='#22d3ee';ctx.beginPath();ctx.arc(X,myP(s.pen),2.4*dpr,0,6.29);ctx.fill();
+}
+
+/* ============================== HUD ============================== */
+const BREEZE=[[0,'None','#94a3b8'],[3,'Light','#5eead4'],[7,'Moderate','#22d3ee'],[99,'Strong','#fb923c']];
+function updateHUD(t,s){
+  const min=Math.round(t*60);
+  clockEl.textContent=String(Math.floor(min/60)).padStart(2,'0')+':'+String(min%60).padStart(2,'0');
+  const drive=s.dT-THETA;
+  dtVal.textContent=(s.dT>=0?'+':'')+s.dT.toFixed(1)+'°C';
+  dtVal.style.color=drive>0?'#fbbf24':'#94a3b8';
+  const bc=BREEZE.find(b=>drive<=b[0])||BREEZE[3];
+  breezeVal.textContent=bc[1];breezeVal.style.color=bc[2];
+  frontVal.textContent=s.pen<0.2?'Coastline':s.pen.toFixed(0)+' km';
+  frontVal.style.color=s.pen<0.2?'#94a3b8':'#67e8f9';
+  if(s.vel>0.05){speedVal.textContent=s.vel.toFixed(1)+' km/h';speedVal.style.color='#67e8f9'}
+  else if(s.pen>0.2){speedVal.textContent=s.vel<-0.05?'Retreating':'Holding';speedVal.style.color='#fbbf24'}
+  else{speedVal.textContent='—';speedVal.style.color='#94a3b8'}
+  let txt,col;
+  if(s.pen>0.4&&s.vel>0.2){txt='FRONT ADVANCING';col='#22d3ee'}
+  else if(s.pen>0.4&&s.vel<=0.2){txt=drive>0?'FRONT HOLDING':'FRONT DECAYING';col='#fbbf24'}
+  else if(drive>0){txt='ONSET IMMINENT';col='#5eead4'}
+  else{txt='QUIESCENT';col='#94a3b8'}
+  statusText.textContent=txt;statusDot.style.backgroundColor=col;statusDot.style.color=col;
+  setFill(timeRange,'#e2e8f0');
+  drawChart(t);
+}
+
+/* ============================== per-frame dynamics ============================== */
+function updateDynamics(t,time){
+  const s=sampleDay(t),penW=s.pen*KM2W;
+  updateEnvironment(t);
+  seaUniforms.uTime.value=time;
+  seaUniforms.uAmp.value=0.22+0.30*s.wind;
+  updateImportedSeaWaves(time,seaUniforms.uAmp.value);
+  updateFlags(penW,s.cloud,time);
+  updateRibbon(penW,s.cloud,time);
+  updateMarine(penW);
+  updateClouds(penW,s.cloud,time);
+  updateArrows(time,penW,s.wind);
+  updateFoam(time);
+  updateHUD(t,s);
+}
+
+/* ============================== events ============================== */
+function onTemps(){
+  state.land=+landRange.value;state.sea=+seaRange.value;
+  landVal.textContent=fmtTemp(state.land);seaVal.textContent=fmtTemp(state.sea);
+  setFill(landRange,'#f59e0b');setFill(seaRange,'#22d3ee');
+   computeDay();updateSeaColors();
+   if(!importedRoot&&terrain)paintTerrain(terrain.geometry);
+  refreshPresetUI();save();
+}
+landRange.addEventListener('input',onTemps);
+seaRange.addEventListener('input',onTemps);
+
+function applyPreset(k){
+  const p=PRESETS[k];
+  state.profile=k;state.land=p.land;state.sea=p.sea;
+  syncSliders();
+  buildTerrain();buildFoam();computeCoastRows();
+  computeDay();updateSeaColors();
+  refreshPresetUI();save();
+}
+document.querySelectorAll('.preset-btn').forEach(b=>b.addEventListener('click',()=>applyPreset(b.dataset.preset)));
+
+tglArrows.addEventListener('click',()=>{state.arrows=!state.arrows;refreshToggles();save()});
+tglSpin.addEventListener('click',()=>{state.spin=!state.spin;refreshToggles();save()});
+$('resetBtn').addEventListener('click',()=>{state={...DEFAULTS};applyPreset(state.profile);refreshToggles();save()});
+
+let simMin=8*60,playing=true,scrubbing=false;
+const SPEED=15;
+const icoPlay=$('icoPlay'),icoPause=$('icoPause');
+function refreshPlayIcon(){
+  icoPlay.classList.toggle('hidden',playing);
+  icoPause.classList.toggle('hidden',!playing);
+}
+$('playBtn').addEventListener('click',()=>{
+  if(!playing&&simMin>=1259)simMin=360;
+  playing=!playing;refreshPlayIcon();
+});
+timeRange.addEventListener('input',()=>{simMin=+timeRange.value;setFill(timeRange,'#e2e8f0')});
+timeRange.addEventListener('pointerdown',()=>scrubbing=true);
+addEventListener('pointerup',()=>scrubbing=false);
+
+addEventListener('keydown',e=>{
+  const tag=e.target.tagName;
+  if(tag==='INPUT'||tag==='BUTTON'||tag==='TEXTAREA')return;
+  if(e.code==='Space'){e.preventDefault();$('playBtn').click()}
+  if(e.code==='ArrowRight'){simMin=clamp(simMin+5,360,1260);timeRange.value=simMin}
+  if(e.code==='ArrowLeft'){simMin=clamp(simMin-5,360,1260);timeRange.value=simMin}
+});
+
+const panelBody=$('panelBody'),collapseIco=$('collapseIco');
+let collapsed=false;
+function setCollapsed(v){collapsed=v;panelBody.classList.toggle('hidden',v);collapseIco.style.transform=v?'rotate(180deg)':''}
+$('collapseBtn').addEventListener('click',()=>setCollapsed(!collapsed));
+if(innerWidth<640)setCollapsed(true);
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+  sizeChart();
+});
+
+/* ============================== init & loop ============================== */
+buildFoam();computeCoastRows();loadImportedScene();
+computeDay();updateSeaColors();
+syncSliders();refreshPresetUI();refreshToggles();
+sizeChart();
+
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05),time=clock.elapsedTime;
+  if(playing){
+    simMin+=dt*SPEED;
+    if(simMin>=1260){simMin=1260;playing=false;refreshPlayIcon()}
+    if(!scrubbing)timeRange.value=simMin;
+  }
+  controls.update();
+  updateDynamics(simMin/60,time);
+  renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
