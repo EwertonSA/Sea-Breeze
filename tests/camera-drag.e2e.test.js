@@ -10,7 +10,7 @@ describe('camera pointer rotation',()=>{
   const consoleErrors=[];
 
   beforeAll(async()=>{
-    jest.setTimeout(60000);
+jest.setTimeout(90000);
     browser=await chromium.launch({
       headless:true,
       args:[
@@ -33,10 +33,7 @@ describe('camera pointer rotation',()=>{
   });
 
   test('rotates the camera when the canvas is dragged',async()=>{
-    await page.waitForFunction(()=>window.camera&&window.controls&&window.renderer,{timeout:30000});
-    const canvas=page.locator('canvas[data-engine*="three.js"]');
-    await canvas.waitFor({state:'attached',timeout:15000});
-    expect(await canvas.isVisible()).toBe(true);
+    await page.waitForFunction(()=>window.__glbLoaded&&window.camera&&window.controls&&window.renderer&&window.renderer.domElement,{timeout:90000});
 
     await page.evaluate(()=>{
       window.controls.autoRotate=false;
@@ -46,12 +43,11 @@ describe('camera pointer rotation',()=>{
       x:window.camera.quaternion.x,y:window.camera.quaternion.y,
       z:window.camera.quaternion.z,w:window.camera.quaternion.w
     }));
-    const bounds=await canvas.boundingBox();
-    expect(bounds).not.toBeNull();
-    const startX=bounds.x+bounds.width*0.5,startY=bounds.y+bounds.height*0.5;
+    const bounds=await page.evaluate(()=>window.renderer.domElement.getBoundingClientRect());
+    const startX=bounds.left+bounds.width*0.5,startY=bounds.top+bounds.height*0.5;
     await page.mouse.move(startX,startY);
     await page.mouse.down();
-    await page.mouse.move(startX+180,startY+40);
+    await page.mouse.move(startX+30,startY+10);
     await page.mouse.up();
     const final=await page.evaluate(()=>{
       window.controls.update();

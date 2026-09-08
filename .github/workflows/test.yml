@@ -1,0 +1,27 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código com suporte ao Git LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true # <-- Isso força o runner a baixar o binário real de 104 MB em vez do ponteiro
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependências e rodar testes
+        run: |
+          npm ci
+          npm test
