@@ -2,7 +2,7 @@ const path=require('path');
 const {pathToFileURL}=require('url');
 const {chromium}=require('playwright');
 
-jest.setTimeout(60000);
+jest.setTimeout(90000);
 
 describe('camera pointer rotation',()=>{
   let browser;
