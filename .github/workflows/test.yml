@@ -14,14 +14,10 @@ jobs:
       - name: Checkout do código com suporte ao Git LFS
         uses: actions/checkout@v4
         with:
-          lfs: true # <-- Isso força o runner a baixar o binário real de 104 MB em vez do ponteiro
+          lfs: true # Garante que o arquivo grande de mais de 100MB seja baixado no runner
 
-      - name: Configurar Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Build da imagem Docker
+        run: docker build -t test-container .
 
-      - name: Instalar dependências e rodar testes
-        run: |
-          npm ci
-          npm test
+      - name: Rodar testes dentro do Docker
+        run: docker run --rm test-container npm test

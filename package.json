@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "test": "npx jest tests/"
+  },
   "devDependencies": {
     "jest": "^29.7.0",
     "jest-playwright-preset": "^4.0.0",
