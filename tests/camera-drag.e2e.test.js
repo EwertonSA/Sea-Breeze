@@ -18,7 +18,7 @@ jest.setTimeout(90000);
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu'
+       
       ]
     });
     page=await browser.newPage({viewport:{width:1280,height:720}});
@@ -33,8 +33,10 @@ jest.setTimeout(90000);
   });
 
   test('rotates the camera when the canvas is dragged',async()=>{
+    console.time('GLB wait');
     await page.waitForFunction(()=>window.__glbLoaded&&window.camera&&window.controls&&window.renderer&&window.renderer.domElement,{timeout:90000});
-
+console.timeEnd('GLB wait');
+console.time('camera interaction');
     await page.evaluate(()=>{
       window.controls.autoRotate=false;
       window.controls.update();
@@ -49,6 +51,8 @@ jest.setTimeout(90000);
     await page.mouse.down();
     await page.mouse.move(startX+30,startY+10);
     await page.mouse.up();
+    console.timeEnd('camera interaction');
+    console.time('final evaluate');
     const final=await page.evaluate(()=>{
       window.controls.update();
       return {
@@ -56,6 +60,7 @@ jest.setTimeout(90000);
         z:window.camera.quaternion.z,w:window.camera.quaternion.w
       };
     });
+    console.timeEnd('final evaluate');
     const quaternionDelta=Math.hypot(final.x-initial.x,final.y-initial.y,final.z-initial.z,final.w-initial.w);
 
     expect(quaternionDelta).toBeGreaterThan(0.0001);

@@ -18,7 +18,7 @@ describe('land and sea after camera rotation',()=>{
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu'
+       
       ]
     });
     page=await browser.newPage({viewport:{width:1280,height:720}});
