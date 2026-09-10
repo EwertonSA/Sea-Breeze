@@ -538,7 +538,7 @@ function setupImportedScene(gltf){
   sea.visible=true;
   proceduralSea.visible=false;
   ribbon.visible=true;marine.visible=false;
-  if(foamMesh)foamMesh.visible=false;
+  if(foamMesh)foamMesh.visible=true;
   window.__coastline=terrain;
   window.__islandMeshes=islandMeshes;
   window.__frontLineMeshes=[findImportedObject(root,'Mesh_3'),findImportedObject(root,'Mesh_6')].filter(Boolean);
@@ -566,6 +566,183 @@ function updateFlags(penW,ci,time){
     mesh.scale.setScalar(6.0);
     mesh.visible=true;
   });
+}
+function createFrontArea(lineMesh) {
+  const geometry = new THREE.BufferGeometry();
+
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xff6b35,
+    transparent: true,
+    opacity: 0.35,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3
+  });
+
+  const area = new THREE.Mesh(geometry, material);
+  area.name = `front-area-${lineMesh.name || 'line'}`;
+
+  lineMesh.parent.add(area);
+  lineMesh.userData.frontArea = area;
+
+  return area;
+}
+
+
+function updateFrontArea(lineMesh, basePos, currentPos, visible) {
+  let area = lineMesh.userData.frontArea;
+
+  if (!area) {
+    area = createFrontArea(lineMesh);
+  }
+
+  // Se não deve estar visível, esconde a área e encerra
+  if (!visible) {
+    area.visible = false;
+    return;
+  }
+
+  const dx = currentPos.x - basePos.x;
+  const dz = currentPos.z - basePos.z;
+  const distance = Math.sqrt(dx * dx + dz * dz);
+
+  if (distance < 0.05) {
+    area.visible = false;
+    return;
+  }
+
+  const dir = new THREE.Vector3(dx, 0, dz).normalize();
+  const perpendicular = new THREE.Vector3(-dir.z, 0, dir.x);
+
+  if (!lineMesh.userData.areaWidth) {
+    const box = new THREE.Box3().setFromObject(lineMesh);
+    const widthX = box.max.x - box.min.x;
+    const widthZ = box.max.z - box.min.z;
+
+    lineMesh.userData.areaWidth = Math.max(widthX, widthZ) * 0.5;
+
+    if (lineMesh.userData.areaWidth < 0.1) {
+      lineMesh.userData.areaWidth = 0.5;
+    }
+  }
+
+  const halfWidth = lineMesh.userData.areaWidth;
+
+  const startLeft = new THREE.Vector3().copy(basePos).addScaledVector(perpendicular, halfWidth);
+  const startRight = new THREE.Vector3().copy(basePos).addScaledVector(perpendicular, -halfWidth);
+
+  const currentLeft = new THREE.Vector3().copy(currentPos).addScaledVector(perpendicular, halfWidth);
+  const currentRight = new THREE.Vector3().copy(currentPos).addScaledVector(perpendicular, -halfWidth);
+
+  const positions = [
+    startLeft.x, startLeft.y + 0.08, startLeft.z,
+    startRight.x, startRight.y + 0.08, startRight.z,
+    currentLeft.x, currentLeft.y + 0.08, currentLeft.z,
+    currentRight.x, currentRight.y + 0.08, currentRight.z
+  ];
+
+  const indices = [
+    0, 1, 2,
+    2, 1, 3
+  ];
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  if (area.geometry) {
+    area.geometry.dispose();
+  }
+
+  area.geometry = geometry;
+  area.visible = true;
+}
+
+
+function resetFrontArea(lineMesh) {
+  if (!lineMesh) return;
+
+  if (lineMesh.userData.frontArea) {
+    lineMesh.userData.frontArea.visible = false;
+  }
+}
+
+
+/*
+ * =====================================================
+ * FRONT LINES
+ * =====================================================
+ */
+
+function updateFrontLines(penW, ci, time) {
+  // Define o limiar de ativação (ajuste se necessário, ex: penW > 0.01 ou com base no ci)
+  const isEnabled = penW > 0.01;
+
+  // Controla a visibilidade das bandeiras com base no avanço da frente
+  if (flagMeshes && flagMeshes.length > 0) {
+    flagMeshes.forEach(flag => {
+      flag.visible = isEnabled;
+    });
+  }
+
+  if (window.__frontLineMeshes && flagMeshes.length > 0) {
+    window.__frontLineMeshes.forEach((lineMesh, index) => {
+      // Se o avanço for zero/início, oculta a linha e a área pintada
+      if (!isEnabled) {
+        lineMesh.visible = false;
+        if (lineMesh.userData.frontArea) {
+          lineMesh.userData.frontArea.visible = false;
+        }
+        return;
+      }
+
+      lineMesh.visible = true;
+
+      if (lineMesh.material) {
+        lineMesh.material.polygonOffset = true;
+        lineMesh.material.polygonOffsetFactor = -4;
+        lineMesh.material.polygonOffsetUnits = -4;
+        lineMesh.material.depthWrite = false;
+        lineMesh.material.needsUpdate = true;
+      }
+
+      const targetFlagIndex = index === 0 ? Math.floor(flagMeshes.length * 0.3) : Math.floor(flagMeshes.length * 0.7);
+      const targetFlag = flagMeshes[targetFlagIndex];
+
+      if (targetFlag) {
+        if (!lineMesh.userData.initialized) {
+          lineMesh.userData.offsetX = lineMesh.position.x - targetFlag.position.x;
+          lineMesh.userData.offsetY = lineMesh.position.y - targetFlag.position.y;
+          lineMesh.userData.offsetZ = lineMesh.position.z - targetFlag.position.z;
+          
+          lineMesh.userData.initialLinePosition = new THREE.Vector3(
+            targetFlag.position.x + lineMesh.userData.offsetX,
+            targetFlag.position.y + lineMesh.userData.offsetY,
+            targetFlag.position.z + lineMesh.userData.offsetZ
+          );
+
+          createFrontArea(lineMesh);
+          lineMesh.userData.initialized = true;
+        }
+
+        // Atualiza a posição mantendo o movimento exato com os offsets do Blender
+        lineMesh.position.x = targetFlag.position.x + lineMesh.userData.offsetX;
+        lineMesh.position.y = (targetFlag.position.y + lineMesh.userData.offsetY) + 0.15;
+        lineMesh.position.z = targetFlag.position.z + lineMesh.userData.offsetZ;
+
+        // Atualiza a área pintada acompanhando a bandeira e o estado de visibilidade
+        updateFrontArea(
+          lineMesh,
+          lineMesh.userData.initialLinePosition,
+          lineMesh.position,
+          isEnabled
+        );
+      }
+    });
+  }
 }
 function updateRibbon(penW,ci,time){
   ribbon.visible=true;
@@ -807,6 +984,7 @@ function updateDynamics(t,time){
   updateFlags(penW,s.cloud,time);
   updateRibbon(penW,s.cloud,time);
   updateMarine(penW);
+  updateFrontLines(penW,time);
   updateClouds(penW,s.cloud,time);
   updateArrows(time,penW,s.wind);
   updateFoam(time);
