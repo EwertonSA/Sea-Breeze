@@ -512,40 +512,7 @@ function updateImportedSeaWaves(time,amp){
   }
   positions.needsUpdate=true;
 }
-function setupImportedScene(gltf){
-  const root=gltf.scene,islandMeshes=[];
-  root.traverse(object=>{
-    if(!object.isMesh)return;
-    const materials=Array.isArray(object.material)?object.material:[object.material];
-    if(materials.some(material=>material&&material.name&&material.name.toLowerCase()==='island'))islandMeshes.push(object);
-  });
-  const ocean=findImportedObject(root,'Plane003');
-  if(!ocean||islandMeshes.length===0)throw new Error('SeaBrise.glb is missing Plane003 or island meshes');
-  const oldTerrain=terrain;
-  if(oldTerrain)oldTerrain.visible=false;
-  root.traverse(object=>{if(object.isMesh){object.castShadow=true;object.receiveShadow=true}});
-  scene.add(root);
-  importedRoot=root;
-  if(islandMeshes[0])islandMeshes[0].scale.set(5,5,5);
-  if(islandMeshes[1])islandMeshes[1].scale.set(3,3,3);
-  if(islandMeshes[2])islandMeshes[2].scale.set(3,3,3);
-  if(islandMeshes[3])islandMeshes[3].scale.set(3,3,3);
-  terrain=islandMeshes[0];
-  sea=ocean;
-  sea.position.y=-3.2;
-  setupSeaWave(sea);
-  window.sea=sea;
-  sea.visible=true;
-  proceduralSea.visible=false;
-  ribbon.visible=true;marine.visible=false;
-  if(foamMesh)foamMesh.visible=true;
-  window.__coastline=terrain;
-  window.__islandMeshes=islandMeshes;
-  window.__frontLineMeshes=[findImportedObject(root,'Mesh_3'),findImportedObject(root,'Mesh_6')].filter(Boolean);
-  window.__frontLineMeshes.forEach(object=>{object.visible=true});
-  window.__glbRoot=root;
-  window.__glbLoaded=true;
-}
+
 function loadImportedScene(){
   const encoded=window.SEA_BREEZE.includes(',')?window.SEA_BREEZE.slice(window.SEA_BREEZE.indexOf(',')+1):window.SEA_BREEZE;
   const binary=atob(encoded),bytes=new Uint8Array(binary.length);
@@ -567,32 +534,213 @@ function updateFlags(penW,ci,time){
     mesh.visible=true;
   });
 }
+// Variáveis de configuração da malha espacial
+const ISLAND_SURFACE_CELL = 2.0; // Célula menor para alta precisão nas montanhas
+const islandSurfaceIndex = new Map();
+const reliefOverlays = [];
+const FRONT_BOUNDARY_POINTS = Array.from({length: 128}, () => new THREE.Vector4());
+const frontBoundaryPoint = new THREE.Vector3();
+
+function createReliefOverlays(root) {
+  reliefOverlays.length = 0;
+  root.updateMatrixWorld(true);
+  root.traverse(object => {
+    if (!object.isMesh) return;
+    if (object === window.sea || object.name === 'Plane003') return;
+    if (object.name === 'Mesh_3' || object.name === 'Mesh_6') return;
+    if (object.name.includes('front-area') || object.name.startsWith('quickmaterial')) return;
+
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uPenW: {value: 0},
+        uProfile: {value: state.profile === 'bay' ? 1 : state.profile === 'cape' ? 2 : 0},
+        uFrontPoints: {value: FRONT_BOUNDARY_POINTS},
+        uFrontPointCount: {value: 0}
+      },
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        void main(){
+          vec4 worldPosition=modelMatrix*vec4(position,1.0);
+          vWorldPosition=worldPosition.xyz;
+          gl_Position=projectionMatrix*viewMatrix*worldPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform float uPenW,uProfile;
+        uniform vec4 uFrontPoints[128];
+        uniform int uFrontPointCount;
+        varying vec3 vWorldPosition;
+        void main(){
+          float coast=0.0;
+          if(uProfile==1.0) coast=-22.0*exp(-pow(vWorldPosition.z/46.0,2.0));
+          else if(uProfile==2.0) coast=22.0*exp(-pow(vWorldPosition.z/46.0,2.0));
+          float front=coast-uPenW;
+          float nearestZ=1e9;
+          for(int i=0;i<128;i++){
+            if(i>=uFrontPointCount) break;
+            float distanceZ=abs(vWorldPosition.z-uFrontPoints[i].z);
+            if(distanceZ<nearestZ){nearestZ=distanceZ;front=uFrontPoints[i].x;}
+          }
+          if(uPenW<=0.01||vWorldPosition.x<front||vWorldPosition.x>coast) discard;
+          gl_FragColor=vec4(1.0,0.8,0.0,0.45);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3
+    });
+    const overlay = new THREE.Mesh(object.geometry, material);
+    overlay.name = `relief-overlay-${object.name || 'island'}`;
+    overlay.renderOrder = 3;
+    overlay.frustumCulled = false;
+    overlay.matrixAutoUpdate = false;
+    overlay.matrix.copy(object.matrixWorld);
+    scene.add(overlay);
+    reliefOverlays.push({mesh: overlay, material});
+  });
+}
+
+function updateReliefOverlays(penW) {
+  const profile = state.profile === 'bay' ? 1 : state.profile === 'cape' ? 2 : 0;
+  let pointCount = 0;
+  if (window.__frontLineMeshes) {
+    window.__frontLineMeshes.forEach(lineMesh => {
+      if (!lineMesh.geometry?.attributes?.position || pointCount >= FRONT_BOUNDARY_POINTS.length) return;
+      lineMesh.updateMatrixWorld(true);
+      const position = lineMesh.geometry.attributes.position;
+      for (let i = 0; i < position.count && pointCount < FRONT_BOUNDARY_POINTS.length; i++) {
+        frontBoundaryPoint.fromBufferAttribute(position, i).applyMatrix4(lineMesh.matrixWorld);
+        FRONT_BOUNDARY_POINTS[pointCount++].set(frontBoundaryPoint.x, 0, frontBoundaryPoint.z, 1);
+      }
+    });
+  }
+  reliefOverlays.forEach(({material}) => {
+    material.uniforms.uPenW.value = penW;
+    material.uniforms.uProfile.value = profile;
+    material.uniforms.uFrontPointCount.value = pointCount;
+  });
+}
+
+function buildIslandHeightMap() {
+  islandSurfaceIndex.clear();
+  
+  const meshesToMap = [];
+  if (window.__glbRoot) {
+    window.__glbRoot.traverse(object => {
+      if (!object.isMesh) return;
+      if (object === window.sea || object.name === 'Plane003') return;
+      if (object.name === 'Mesh_3' || object.name === 'Mesh_6') return;
+      if (object.name.includes('front-area') || object.name.startsWith('quickmaterial')) return;
+      meshesToMap.push(object);
+    });
+  }
+
+  if (meshesToMap.length === 0) {
+    console.warn("Nenhuma malha da ilha encontrada para o mapeamento de altura!");
+    return;
+  }
+
+  meshesToMap.forEach(mesh => {
+    mesh.updateMatrixWorld(true);
+    const geometry = mesh.geometry;
+    const posAttr = geometry.attributes.position;
+    if (!posAttr) return;
+
+    const vertex = new THREE.Vector3();
+    for (let i = 0; i < posAttr.count; i++) {
+      vertex.fromBufferAttribute(posAttr, i);
+      vertex.applyMatrix4(mesh.matrixWorld);
+
+      const ix = Math.floor(vertex.x / ISLAND_SURFACE_CELL);
+      const iz = Math.floor(vertex.z / ISLAND_SURFACE_CELL);
+      const key = `${ix},${iz}`;
+
+      if (!islandSurfaceIndex.has(key) || vertex.y > islandSurfaceIndex.get(key).y) {
+        islandSurfaceIndex.set(key, { x: vertex.x, y: vertex.y, z: vertex.z });
+      }
+    }
+  });
+
+  console.log(`Mapa de altura da ilha gerado com sucesso! Total de células: ${islandSurfaceIndex.size}`);
+}
+
+function getCalculatedTerrainHeight(x, z) {
+  const fallbackHeight = typeof heightAt === 'function' ? heightAt(x, z) : 0;
+
+  if (!islandSurfaceIndex.size) return fallbackHeight;
+
+  const ix = Math.floor(x / ISLAND_SURFACE_CELL);
+  const iz = Math.floor(z / ISLAND_SURFACE_CELL);
+  
+  let highestPoint = -Infinity;
+
+  for (let dz = -2; dz <= 2; dz++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const point = islandSurfaceIndex.get(`${ix + dx},${iz + dz}`);
+      if (!point) continue;
+      
+      const distanceSq = (point.x - x) ** 2 + (point.z - z) ** 2;
+      if (distanceSq > 100) continue;
+      
+      highestPoint = Math.max(highestPoint, point.y);
+    }
+  }
+
+  return Number.isFinite(highestPoint) ? highestPoint : Math.max(0.08, fallbackHeight);
+}
+function setupImportedScene(gltf){
+  const root=gltf.scene,islandMeshes=[];
+  root.traverse(object=>{
+    if(!object.isMesh)return;
+    const materials=Array.isArray(object.material)?object.material:[object.material];
+    if(materials.some(material=>material&&material.name&&material.name.toLowerCase()==='island'))islandMeshes.push(object);
+  });
+  const ocean=findImportedObject(root,'Plane003');
+  if(!ocean||islandMeshes.length===0)throw new Error('SeaBrise.glb is missing Plane003 or island meshes');
+  const oldTerrain=terrain;
+  if(oldTerrain)oldTerrain.visible=false;
+  root.traverse(object=>{if(object.isMesh){object.castShadow=true;object.receiveShadow=true}});
+  scene.add(root);
+  importedRoot=root;
+
+  terrain=islandMeshes[0];
+  sea=ocean;
+  sea.position.y=-3.2;
+  setupSeaWave(sea);
+  window.sea=sea;
+  sea.visible=true;
+  proceduralSea.visible=false;
+  ribbon.visible=true;marine.visible=false;
+  if(foamMesh)foamMesh.visible=true;
+  window.__coastline=terrain;
+  window.__islandMeshes=islandMeshes;
+  window.__frontLineMeshes=[findImportedObject(root,'Mesh_3'),findImportedObject(root,'Mesh_6')].filter(Boolean);
+  window.__frontLineMeshes.forEach(object=>{object.visible=true});
+  window.__glbRoot=root;
+  window.__glbLoaded=true;
+  buildIslandHeightMap();
+  createReliefOverlays(root);
+}
+
 function extractCurvePoints(lineMesh, numSamples = 40) {
   const posAttr = lineMesh.geometry.attributes.position;
   if (!posAttr) return [];
-
   const rawPoints = [];
   const temp = new THREE.Vector3();
-
-  // Extrai todos os vértices da geometria
   for (let i = 0; i < posAttr.count; i++) {
     temp.fromBufferAttribute(posAttr, i);
     rawPoints.push(temp.clone());
   }
-
-  // Identifica o eixo principal de extensão da linha (X ou Z)
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   rawPoints.forEach(p => {
     if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
     if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
   });
-
   const useX = (maxX - minX) > (maxZ - minZ);
-  
-  // Ordena os pontos ao longo da curva para formar uma sequência contínua
   rawPoints.sort((a, b) => useX ? (a.x - b.x) : (a.z - b.z));
-
-  // Amostra pontos distribuídos uniformemente
   const sampled = [];
   const step = Math.max(1, Math.floor(rawPoints.length / numSamples));
   for (let i = 0; i < rawPoints.length; i += step) {
@@ -601,15 +749,13 @@ function extractCurvePoints(lineMesh, numSamples = 40) {
   if (sampled[sampled.length - 1] !== rawPoints[rawPoints.length - 1]) {
     sampled.push(rawPoints[rawPoints.length - 1]);
   }
-
   return sampled;
 }
 
 function createFrontArea(lineMesh) {
   const geometry = new THREE.BufferGeometry();
-
   const material = new THREE.MeshBasicMaterial({
-    color: 0xffcc00, // Amarelo vibrante igual ao protótipo
+    color: 0xffcc00, 
     transparent: true,
     opacity: 0.45,
     side: THREE.DoubleSide,
@@ -618,16 +764,17 @@ function createFrontArea(lineMesh) {
     polygonOffsetFactor: -3,
     polygonOffsetUnits: -3
   });
-
   const area = new THREE.Mesh(geometry, material);
   area.name = `front-area-${lineMesh.name || 'line'}`;
+  
+  // Extrai os pontos base
+  const points = extractCurvePoints(lineMesh, 120);
+  
+  lineMesh.updateMatrixWorld(true);
 
-  // Salva os pontos amostrados da curva no userData
-  lineMesh.userData.curvePoints = extractCurvePoints(lineMesh, 40);
-
+  lineMesh.userData.curvePoints = points;
   scene.add(area);
   lineMesh.userData.frontArea = area;
-
   return area;
 }
 
@@ -636,54 +783,46 @@ function updateFrontArea(lineMesh) {
   if (!area) {
     area = createFrontArea(lineMesh);
   }
-
   const initialPos = lineMesh.userData.initialLinePosition;
   if (!initialPos) return;
-
   const currentPos = lineMesh.position;
-  
-  // Vetor do deslocamento total percorrido
   const delta = new THREE.Vector3().subVectors(currentPos, initialPos);
   const distance = delta.length();
-
   if (distance < 0.05) {
     area.visible = false;
     return;
   }
-
   const curvePoints = lineMesh.userData.curvePoints;
   if (!curvePoints || curvePoints.length < 2) return;
-
+  
   lineMesh.updateMatrixWorld(true);
-
   const positions = [];
   const indices = [];
-
-  // Para cada ponto ao longo da curva orgânica da frontline:
-  // - C_i: Ponto na posição atual da linha
-  // - S_i: Ponto ancorado no local de partida inicial
+  const crossSections = 16;
+  
   for (let i = 0; i < curvePoints.length; i++) {
-    // Transforma o ponto local para o espaço do mundo na posição atual
     const currentWorldPt = curvePoints[i].clone().applyMatrix4(lineMesh.matrixWorld);
-    currentWorldPt.y += 0.08; // Leve elevação para não afundar no terreno
-
-    // Ponto equivalente travado na origem de partida
     const startWorldPt = currentWorldPt.clone().sub(delta);
 
-    // Vértices atuais (Ponto de início e Ponto avançado)
-    positions.push(startWorldPt.x, startWorldPt.y, startWorldPt.z);       // 2*i
-    positions.push(currentWorldPt.x, currentWorldPt.y, currentWorldPt.z); // 2*i + 1
+    for (let section = 0; section <= crossSections; section++) {
+      const amount = section / crossSections;
+      const x = startWorldPt.x + (currentWorldPt.x - startWorldPt.x) * amount;
+      const z = startWorldPt.z + (currentWorldPt.z - startWorldPt.z) * amount;
+      const y = getCalculatedTerrainHeight(x, z) + 0.08;
+      positions.push(x, y, z);
+    }
 
-    // Conecta os triângulos entre pontos consecutivos da curva
     if (i < curvePoints.length - 1) {
-      const idx = i * 2;
-      // Triângulo 1: S_i -> C_i -> S_{i+1}
-      indices.push(idx, idx + 1, idx + 2);
-      // Triângulo 2: S_{i+1} -> C_i -> C_{i+1}
-      indices.push(idx + 2, idx + 1, idx + 3);
+      const row = crossSections + 1;
+      const index = i * row;
+      for (let section = 0; section < crossSections; section++) {
+        const current = index + section;
+        const next = current + row;
+        indices.push(current, current + 1, next);
+        indices.push(next, current + 1, next + 1);
+      }
     }
   }
-
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setIndex(indices);
@@ -692,39 +831,26 @@ function updateFrontArea(lineMesh) {
   if (area.geometry) {
     area.geometry.dispose();
   }
-
   area.geometry = geometry;
   area.visible = true;
 }
+
 function resetFrontArea(lineMesh) {
   if (!lineMesh) return;
-
   if (lineMesh.userData.frontArea) {
     lineMesh.userData.frontArea.visible = false;
   }
 }
 
-
-/*
- * =====================================================
- * FRONT LINES
- * =====================================================
- */
-
 function updateFrontLines(penW, ci, time) {
-  // Define o limiar de ativação (ajuste se necessário, ex: penW > 0.01 ou com base no ci)
   const isEnabled = penW > 0.01;
-
-  // Controla a visibilidade das bandeiras com base no avanço da frente
   if (flagMeshes && flagMeshes.length > 0) {
     flagMeshes.forEach(flag => {
       flag.visible = isEnabled;
     });
   }
-
   if (window.__frontLineMeshes && flagMeshes.length > 0) {
     window.__frontLineMeshes.forEach((lineMesh, index) => {
-      // Se o avanço for zero/início, oculta a linha e a área pintada
       if (!isEnabled) {
         lineMesh.visible = false;
         if (lineMesh.userData.frontArea) {
@@ -732,9 +858,7 @@ function updateFrontLines(penW, ci, time) {
         }
         return;
       }
-
       lineMesh.visible = true;
-
       if (lineMesh.material) {
         lineMesh.material.polygonOffset = true;
         lineMesh.material.polygonOffsetFactor = -4;
@@ -742,41 +866,28 @@ function updateFrontLines(penW, ci, time) {
         lineMesh.material.depthWrite = false;
         lineMesh.material.needsUpdate = true;
       }
-
       const targetFlagIndex = index === 0 ? Math.floor(flagMeshes.length * 0.3) : Math.floor(flagMeshes.length * 0.7);
       const targetFlag = flagMeshes[targetFlagIndex];
-
       if (targetFlag) {
         if (!lineMesh.userData.initialized) {
           lineMesh.userData.offsetX = lineMesh.position.x - targetFlag.position.x;
           lineMesh.userData.offsetY = lineMesh.position.y - targetFlag.position.y;
           lineMesh.userData.offsetZ = lineMesh.position.z - targetFlag.position.z;
-          
           lineMesh.userData.initialLinePosition = new THREE.Vector3(
             targetFlag.position.x + lineMesh.userData.offsetX,
             targetFlag.position.y + lineMesh.userData.offsetY,
             targetFlag.position.z + lineMesh.userData.offsetZ
           );
-
-          createFrontArea(lineMesh);
           lineMesh.userData.initialized = true;
         }
-
-        // Atualiza a posição mantendo o movimento exato com os offsets do Blender
         lineMesh.position.x = targetFlag.position.x + lineMesh.userData.offsetX;
         lineMesh.position.y = (targetFlag.position.y + lineMesh.userData.offsetY) + 0.15;
         lineMesh.position.z = targetFlag.position.z + lineMesh.userData.offsetZ;
-
-        // Atualiza a área pintada acompanhando a bandeira e o estado de visibilidade
-        updateFrontArea(
-          lineMesh,
-          lineMesh.userData.initialLinePosition,
-          lineMesh.position,
-          isEnabled
-        );
+        if (lineMesh.userData.frontArea) lineMesh.userData.frontArea.visible = false;
       }
     });
   }
+  updateReliefOverlays(isEnabled ? penW : 0);
 }
 function updateRibbon(penW,ci,time){
   ribbon.visible=true;
