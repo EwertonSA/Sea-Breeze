@@ -191,7 +191,7 @@
   </div>
 
   <!-- Hint -->
-  <div class="pointer-events-none absolute bottom-5 right-5 hidden xl:flex items-center gap-4 text-[11px] text-white/45">
+  <div class="pointer-events-none absolute bottom-24 right-5 hidden xl:flex items-center gap-4 whitespace-nowrap text-[11px] text-white/45">
     <span class="flex items-center gap-1.5"><i data-lucide="rotate-3d" class="w-3.5 h-3.5"></i>Drag to rotate</span>
     <span class="flex items-center gap-1.5"><i data-lucide="mouse" class="w-3.5 h-3.5"></i>Scroll to zoom</span>
     <span class="flex items-center gap-1.5"><i data-lucide="space" class="w-3.5 h-3.5"></i>Space to play</span>
@@ -690,7 +690,9 @@ function createReliefOverlays(root,islandMeshes){
       uPenW:{value:0},
       uProfile:{value:0},
       uFrontPoints:{value:reliefFrontPoints},
-      uFrontPointCount:{value:0}
+      uFrontPointCount:{value:0},
+      uZMin:{value:0},
+      uZMax:{value:1}
     },
     transparent:true,
     depthWrite:false,
@@ -712,6 +714,7 @@ function createReliefOverlays(root,islandMeshes){
       uniform float uProfile;
       uniform vec3 uFrontPoints[RELIEF_MAX_POINTS];
       uniform int uFrontPointCount;
+      uniform float uZMin,uZMax;
       varying vec3 vWorld;
       float coastXAt(float z){
         if(uProfile<0.5)return 0.0;
@@ -720,6 +723,7 @@ function createReliefOverlays(root,islandMeshes){
       }
       void main(){
         if(uPenW<=0.01){gl_FragColor=vec4(0.0,0.0,0.0,0.0);return;}
+        if(vWorld.z<uZMin||vWorld.z>uZMax){gl_FragColor=vec4(0.0,0.0,0.0,0.0);return;}
         float coastX=coastXAt(vWorld.z);
         float frontX=coastX;
         if(uFrontPointCount>0){
@@ -770,6 +774,15 @@ function updateReliefOverlays(penW){
     const p=sorted[idx];
     reliefFrontPoints[k].set(p.x,p.y||0,p.z);
   }
+  let zMin=Infinity,zMax=-Infinity;
+  const flags=flagWorldPositions.length>0?flagWorldPositions:sorted;
+  for(const p of flags){
+    if(p.z<zMin)zMin=p.z;
+    if(p.z>zMax)zMax=p.z;
+  }
+  if(!isFinite(zMin)||zMax-zMin<1e-4){const e=sorted[0]||{z:0};zMin=zMax=e.z}
+  material.uniforms.uZMin.value=zMin;
+  material.uniforms.uZMax.value=zMax;
   for(const overlay of reliefOverlays)overlay.visible=visible;
 }
 window.createReliefOverlays=createReliefOverlays;
